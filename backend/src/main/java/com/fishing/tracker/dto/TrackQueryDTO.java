@@ -1,11 +1,9 @@
 package com.fishing.tracker.dto;
 
-import lombok.Data;
 import org.springframework.format.annotation.DateTimeFormat;
 
 import java.time.LocalDateTime;
 
-@Data
 public class TrackQueryDTO {
 
     private Long vesselId;
@@ -15,4 +13,16 @@ public class TrackQueryDTO {
 
     @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime endTime;
+
+    public Long getVesselId() { return vesselId; }
+
+    public void setVesselId(Long vesselId) { this.vesselId = vesselId; }
+
+    public LocalDateTime getStartTime() { return startTime; }
+
+    public void setStartTime(LocalDateTime startTime) { this.startTime = startTime; }
+
+    public LocalDateTime getEndTime() { return endTime; }
+
+    public void setEndTime(LocalDateTime endTime) { this.endTime = endTime; }
 }

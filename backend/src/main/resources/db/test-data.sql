@@ -28,9 +28,17 @@ BEGIN
         t := start_time + (i || ' minutes')::INTERVAL * 30;
         curr_lon := base_lon + (i * 0.015) + (RANDOM() * 0.02 - 0.01);
         curr_lat := base_lat - (i * 0.008) + (RANDOM() * 0.02 - 0.01) + SIN(i * 0.1) * 0.3;
-        speed := 8.0 + RANDOM() * 6.0;
+
+        IF (i >= 80 AND i <= 100) OR (i >= 180 AND i <= 210) OR (i >= 280 AND i <= 300) THEN
+            speed := 0.5 + RANDOM() * 1.2;
+            curr_lon := curr_lon + SIN(i * 0.5) * 0.08;
+            curr_lat := curr_lat + COS(i * 0.4) * 0.08;
+        ELSE
+            speed := 8.0 + RANDOM() * 6.0;
+        END IF;
+
         heading := 120.0 + (RANDOM() * 40 - 20);
-        
+
         INSERT INTO vessel_gps_track (vessel_id, longitude, latitude, speed, heading, track_time)
         VALUES (v_id, curr_lon, curr_lat, speed, heading, t);
     END LOOP;
@@ -105,23 +113,39 @@ DECLARE
     center_lat DECIMAL := 30.0;
     dist DECIMAL;
     time_factor DECIMAL;
+    is_calm BOOLEAN;
 BEGIN
     FOR time_idx IN 0..56 LOOP
         t := NOW() - INTERVAL '7 days' + (time_idx || ' hours')::INTERVAL * 3;
         time_factor := SIN(time_idx * 0.3) * 5;
-        
+
+        -- 对应渔船1的3个作业区时间段，强制风平浪静
+        -- 作业区1: ~40-50小时 → time_idx 13-17
+        -- 作业区2: ~90-105小时 → time_idx 30-35
+        -- 作业区3: ~140-150小时 → time_idx 47-50
+        is_calm := (time_idx BETWEEN 13 AND 17)
+                OR (time_idx BETWEEN 30 AND 35)
+                OR (time_idx BETWEEN 47 AND 50);
+
         FOR lon_idx IN 0..15 LOOP
             FOR lat_idx IN 0..20 LOOP
                 lon_val := 115.0 + lon_idx;
                 lat_val := 20.0 + lat_idx;
-                
+
                 dist := SQRT(POWER(lon_val - center_lon, 2) + POWER(lat_val - center_lat, 2));
-                
+
                 pressure := 1013.0 + time_factor + SIN(lon_idx * 0.5) * 3 + COS(lat_idx * 0.4) * 2 - dist * 0.3;
-                wind_speed := GREATEST(0.5, 8.0 + time_factor + SIN(lon_idx * 0.3 + lat_idx * 0.2) * 5 + RANDOM() * 2);
+
+                IF is_calm THEN
+                    wind_speed := GREATEST(0.3, 0.8 + RANDOM() * 1.5);
+                    wave_height := GREATEST(0.1, 0.3 + RANDOM() * 0.6);
+                ELSE
+                    wind_speed := GREATEST(0.5, 8.0 + time_factor + SIN(lon_idx * 0.3 + lat_idx * 0.2) * 5 + RANDOM() * 2);
+                    wave_height := GREATEST(0.1, wind_speed * 0.25 + RANDOM() * 0.5);
+                END IF;
+
                 wind_dir := (90 + time_factor * 10 + SIN(lon_idx * 0.2) * 30 + RANDOM() * 20)::DECIMAL;
-                wave_height := GREATEST(0.1, wind_speed * 0.25 + RANDOM() * 0.5);
-                
+
                 INSERT INTO weather_grid (grid_time, longitude, latitude, pressure, wind_speed, wind_direction, wave_height)
                 VALUES (t, lon_val, lat_val, pressure, wind_speed, wind_dir, wave_height);
             END LOOP;

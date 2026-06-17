@@ -1,12 +1,13 @@
 package com.fishing.tracker.controller;
 
 import com.fishing.tracker.common.Result;
+import com.fishing.tracker.dto.FishingZoneDTO;
 import com.fishing.tracker.dto.TrackQueryDTO;
 import com.fishing.tracker.entity.VesselGpsTrack;
 import com.fishing.tracker.service.VesselGpsTrackService;
 import org.springframework.web.bind.annotation.*;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 import java.util.List;
 
 @RestController
@@ -24,5 +25,15 @@ public class VesselGpsTrackController {
                 queryDTO.getEndTime()
         );
         return Result.success(tracks);
+    }
+
+    @GetMapping("/analyze-zones")
+    public Result<List<FishingZoneDTO>> analyzeFishingZones(TrackQueryDTO queryDTO) {
+        List<FishingZoneDTO> zones = vesselGpsTrackService.analyzeFishingZones(
+                queryDTO.getVesselId(),
+                queryDTO.getStartTime(),
+                queryDTO.getEndTime()
+        );
+        return Result.success(zones);
     }
 }

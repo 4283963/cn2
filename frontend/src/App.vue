@@ -143,7 +143,47 @@
         :weather-grids="displayWeatherGrids"
         :show-weather="showWeather"
         :weather-type="weatherType"
+        :fishing-zones="fishingZones"
       />
+
+      <div class="zone-stats-panel" v-if="fishingZones.length > 0 || analyzingZones">
+        <div class="zone-stats-header">
+          <el-icon :size="16" color="#ffc107"><Warning /></el-icon>
+          <span class="zone-stats-title">捕鱼作业区分析</span>
+          <el-loading v-if="analyzingZones" size="small" style="margin-left: auto" />
+        </div>
+        <div class="zone-stats-body" v-if="!analyzingZones">
+          <div class="zone-stat-row">
+            <span class="stat-label">作业次数</span>
+            <span class="stat-value highlight">{{ fishingZones.length }}</span>
+            <span class="stat-unit">次</span>
+          </div>
+          <div class="zone-stat-row">
+            <span class="stat-label">总作业时长</span>
+            <span class="stat-value">{{ totalFishingHours }}</span>
+            <span class="stat-unit">小时</span>
+          </div>
+          <div class="zone-stat-row" v-if="avgSpeed">
+            <span class="stat-label">平均航速</span>
+            <span class="stat-value">{{ avgSpeed }}</span>
+            <span class="stat-unit">节</span>
+          </div>
+        </div>
+        <div class="zone-stats-body" v-else>
+          <div class="analyzing-text">正在分析航迹...</div>
+        </div>
+        <div class="zone-list" v-if="!analyzingZones && fishingZones.length > 0">
+          <div class="zone-item" v-for="(zone, idx) in fishingZones" :key="zone.id">
+            <div class="zone-badge">#{{ idx + 1 }}</div>
+            <div class="zone-info">
+              <div class="zone-time">{{ formatZoneTime(zone) }}</div>
+              <div class="zone-detail">
+                时长: {{ formatDuration(zone.durationMinutes) }} · 航速: {{ zone.avgSpeed }}节
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -151,6 +191,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, shallowRef } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Warning } from '@element-plus/icons-vue'
 import { vesselApi, trackApi, weatherApi } from './api'
 import FishingMap from './components/FishingMap.vue'
 
@@ -168,6 +209,21 @@ const playSpeed = ref(1)
 const showWeather = ref(true)
 const weatherType = ref('windSpeed')
 const displayWeatherGrids = shallowRef([])
+
+const fishingZones = shallowRef([])
+const analyzingZones = ref(false)
+
+const totalFishingHours = computed(() => {
+  if (!fishingZones.value.length) return '0'
+  const totalMin = fishingZones.value.reduce((sum, z) => sum + (z.durationMinutes || 0), 0)
+  return (totalMin / 60).toFixed(1)
+})
+
+const avgSpeed = computed(() => {
+  if (!fishingZones.value.length) return null
+  const sum = fishingZones.value.reduce((s, z) => s + parseFloat(z.avgSpeed || 0), 0)
+  return (sum / fishingZones.value.length).toFixed(1)
+})
 
 const weatherCache = new Map()
 const weatherTimes = []
@@ -277,6 +333,22 @@ function parseDate(s) {
   return isNaN(t) ? 0 : t
 }
 
+function formatZoneTime(zone) {
+  if (!zone || !zone.startTime) return ''
+  const st = String(zone.startTime).slice(5, 16)
+  const et = String(zone.endTime).slice(5, 16)
+  return `${st} → ${et}`
+}
+
+function formatDuration(minutes) {
+  if (!minutes) return '0分钟'
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  if (h > 0 && m > 0) return `${h}小时${m}分`
+  if (h > 0) return `${h}小时`
+  return `${m}分钟`
+}
+
 function onVesselChange() {
   queryTrack()
 }
@@ -288,6 +360,8 @@ async function queryTrack() {
   loadingTrack.value = true
   clearWeatherCache()
   displayWeatherGrids.value = []
+  fishingZones.value = []
+  analyzingZones.value = false
   uiIndex.value = 0
   virtualFloatIndex = 0
   accumulator = 0
@@ -305,12 +379,34 @@ async function queryTrack() {
       precomputeTrackMeta()
       scheduleWeatherPrefetch()
       applyWeatherForIndex(0, true)
+      analyzeFishingZones()
     }
   } catch (e) {
     console.error('查询轨迹失败', e)
     ElMessage.error('查询轨迹失败')
   } finally {
     loadingTrack.value = false
+  }
+}
+
+async function analyzeFishingZones() {
+  if (!selectedVesselId.value || !timeRange.value || timeRange.value.length < 2) return
+  analyzingZones.value = true
+  fishingZones.value = []
+  try {
+    const zones = await trackApi.analyzeZones({
+      vesselId: selectedVesselId.value,
+      startTime: timeRange.value[0],
+      endTime: timeRange.value[1]
+    })
+    fishingZones.value = zones || []
+    if (zones && zones.length > 0) {
+      ElMessage.success(`识别到 ${zones.length} 个捕鱼作业区`)
+    }
+  } catch (e) {
+    console.error('作业区分析失败', e)
+  } finally {
+    analyzingZones.value = false
   }
 }
 
@@ -733,5 +829,132 @@ watch(showWeather, (val) => {
 .map-container {
   flex: 1;
   position: relative;
+}
+
+.zone-stats-panel {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 5;
+  min-width: 240px;
+  max-width: 320px;
+  background: rgba(20, 20, 28, 0.92);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255, 193, 7, 0.3);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.zone-stats-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: linear-gradient(90deg, rgba(255, 193, 7, 0.15), transparent);
+  border-bottom: 1px solid rgba(255, 193, 7, 0.2);
+}
+
+.zone-stats-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffc107;
+}
+
+.zone-stats-body {
+  padding: 10px 12px;
+}
+
+.analyzing-text {
+  font-size: 12px;
+  color: #aaa;
+  text-align: center;
+  padding: 8px 0;
+}
+
+.zone-stat-row {
+  display: flex;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+.zone-stat-row .stat-label {
+  color: #888;
+  flex: 1;
+}
+
+.zone-stat-row .stat-value {
+  color: #fff;
+  font-weight: 600;
+  font-size: 15px;
+  margin-right: 4px;
+}
+
+.zone-stat-row .stat-value.highlight {
+  color: #ffc107;
+  font-size: 18px;
+}
+
+.zone-stat-row .stat-unit {
+  color: #888;
+  font-size: 11px;
+}
+
+.zone-list {
+  max-height: 160px;
+  overflow-y: auto;
+  border-top: 1px solid rgba(255, 193, 7, 0.15);
+}
+
+.zone-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  transition: background 0.15s;
+}
+
+.zone-item:hover {
+  background: rgba(255, 193, 7, 0.08);
+}
+
+.zone-item:last-child {
+  border-bottom: none;
+}
+
+.zone-badge {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ffc107, #ff8f00);
+  color: #1a1a1a;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.zone-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.zone-time {
+  font-size: 12px;
+  color: #ffc107;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.zone-detail {
+  font-size: 11px;
+  color: #999;
+  margin-top: 2px;
 }
 </style>

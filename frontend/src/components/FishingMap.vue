@@ -27,6 +27,10 @@ const props = defineProps({
   weatherType: {
     type: String,
     default: 'windSpeed'
+  },
+  fishingZones: {
+    type: Array,
+    default: () => []
   }
 })
 
@@ -82,6 +86,10 @@ defineExpose({
   setWeatherGridsImmediate(grids, type) {
     if (!mapReady.value) return
     renderWeatherGrid(grids, type)
+  },
+  setFishingZones(zones) {
+    if (!mapReady.value) return
+    drawFishingZones(zones)
   },
   fitToTrack() {
     doFitToTrack()
@@ -148,6 +156,9 @@ function initMap() {
     if (props.showWeather && props.weatherGrids.length > 0) {
       renderWeatherGrid(props.weatherGrids, props.weatherType)
     }
+    if (props.fishingZones && props.fishingZones.length > 0) {
+      drawFishingZones(props.fishingZones)
+    }
   })
 }
 
@@ -201,6 +212,41 @@ function initLayers() {
       'fill-opacity': 0.55
     }
   }, 'track-line')
+
+  m.addSource('fishing-zones-source', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [] }
+  })
+  m.addLayer({
+    id: 'fishing-zones-line',
+    type: 'line',
+    source: 'fishing-zones-source',
+    layout: {
+      'line-join': 'round',
+      'line-cap': 'round'
+    },
+    paint: {
+      'line-color': '#ffc107',
+      'line-width': 8,
+      'line-opacity': 0.85
+    }
+  }, 'track-progress-line')
+
+  m.addLayer({
+    id: 'fishing-zones-outline',
+    type: 'line',
+    source: 'fishing-zones-source',
+    layout: {
+      'line-join': 'round',
+      'line-cap': 'round'
+    },
+    paint: {
+      'line-color': '#ff8f00',
+      'line-width': 2,
+      'line-opacity': 1,
+      'line-dasharray': [1, 0]
+    }
+  }, 'fishing-zones-line')
 
   lastProgressPct.value = -1
 }
@@ -403,6 +449,74 @@ function doRenderWeatherGrid(grids, type) {
   }
 }
 
+function drawFishingZones(zones) {
+  const m = map.value
+  if (!m || !zones || !zones.length) {
+    if (m && m.getSource('fishing-zones-source')) {
+      m.getSource('fishing-zones-source').setData({ type: 'FeatureCollection', features: [] })
+    }
+    return
+  }
+
+  const allPoints = rawPoints.value
+  if (!allPoints.length) return
+
+  const features = []
+
+  for (let zi = 0; zi < zones.length; zi++) {
+    const zone = zones[zi]
+    let startIdx = zone.startIndex != null ? Number(zone.startIndex) : -1
+    let endIdx = zone.endIndex != null ? Number(zone.endIndex) : -1
+
+    if (startIdx < 0 || endIdx < 0 || startIdx >= allPoints.length || endIdx >= allPoints.length || startIdx >= endIdx) {
+      const startLon = parseFloat(zone.startLongitude)
+      const startLat = parseFloat(zone.startLatitude)
+      const endLon = parseFloat(zone.endLongitude)
+      const endLat = parseFloat(zone.endLatitude)
+      let minStartDist = Infinity, minEndDist = Infinity
+      for (let i = 0; i < allPoints.length; i++) {
+        const p = allPoints[i]
+        const lon = parseFloat(p.longitude)
+        const lat = parseFloat(p.latitude)
+        const dStart = Math.hypot(lon - startLon, lat - startLat)
+        const dEnd = Math.hypot(lon - endLon, lat - endLat)
+        if (dStart < minStartDist) { minStartDist = dStart; startIdx = i }
+        if (dEnd < minEndDist) { minEndDist = dEnd; endIdx = i }
+      }
+      if (startIdx > endIdx) { const t = startIdx; startIdx = endIdx; endIdx = t }
+    }
+
+    if (startIdx < 0 || endIdx < 0 || endIdx - startIdx < 2) continue
+
+    const coords = []
+    for (let i = startIdx; i <= endIdx; i++) {
+      coords.push([parseFloat(allPoints[i].longitude), parseFloat(allPoints[i].latitude)])
+    }
+
+    const dur = zone.durationMinutes || 0
+    const hours = Math.floor(dur / 60)
+    const mins = dur % 60
+    const desc = `作业区 #${zi + 1}\n${hours ? hours + '小时' : ''}${mins}分钟\n平均航速 ${zone.avgSpeed} 节`
+
+    features.push({
+      type: 'Feature',
+      geometry: { type: 'LineString', coordinates: coords },
+      properties: {
+        id: zone.id,
+        description: desc,
+        duration: dur,
+        avgSpeed: zone.avgSpeed,
+        zoneIndex: zi + 1
+      }
+    })
+  }
+
+  const src = m.getSource('fishing-zones-source')
+  if (src) {
+    src.setData({ type: 'FeatureCollection', features })
+  }
+}
+
 function doFitToTrack() {
   const m = map.value
   if (!m || !simplifiedCoords.value.length) return
@@ -445,6 +559,11 @@ watch(() => props.showWeather, (val) => {
   const m = map.value
   if (!m || !mapReady.value || !m.getLayer('weather-polygons')) return
   m.setLayoutProperty('weather-polygons', 'visibility', val ? 'visible' : 'none')
+})
+
+watch(() => props.fishingZones, (val) => {
+  if (!mapReady.value) return
+  drawFishingZones(val || [])
 })
 </script>
 

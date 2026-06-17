@@ -27,7 +27,8 @@ export const vesselApi = {
 }
 
 export const trackApi = {
-  query: (params) => request.get('/track/query', { params })
+  query: (params) => request.get('/track/query', { params }),
+  analyzeZones: (params) => request.get('/track/analyze-zones', { params })
 }
 
 export const weatherApi = {

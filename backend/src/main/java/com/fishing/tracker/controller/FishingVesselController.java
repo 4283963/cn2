@@ -5,7 +5,7 @@ import com.fishing.tracker.entity.FishingVessel;
 import com.fishing.tracker.service.FishingVesselService;
 import org.springframework.web.bind.annotation.*;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 import java.util.List;
 
 @RestController
