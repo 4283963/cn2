@@ -3,6 +3,9 @@
     <div class="sidebar">
       <div class="sidebar-header">
         <h2>远洋渔船监控系统</h2>
+        <div class="sub-title" v-if="trackPoints.length">
+          轨迹点数: {{ trackPoints.length }}
+        </div>
       </div>
 
       <div class="sidebar-content">
@@ -34,7 +37,6 @@
             format="YYYY-MM-DD HH:mm:ss"
             value-format="YYYY-MM-DD HH:mm:ss"
             style="width: 100%"
-            @change="onTimeRangeChange"
           />
           <el-button
             type="primary"
@@ -50,66 +52,55 @@
           <h3>轨迹播放</h3>
           <div class="play-controls">
             <el-button-group>
-              <el-button @click="resetPlayback" :disabled="!isPlaying && currentIndex === 0">
+              <el-button @click="resetPlayback">
                 <el-icon><Refresh /></el-icon>
               </el-button>
-              <el-button @click="togglePlayback">
+              <el-button @click="togglePlayback" :type="isPlaying ? 'warning' : 'success'">
                 <el-icon v-if="isPlaying"><Pause /></el-icon>
                 <el-icon v-else><VideoPlay /></el-icon>
               </el-button>
-              <el-button @click="stepForward" :disabled="currentIndex >= trackPoints.length - 1">
+              <el-button @click="stepForward" :disabled="uiIndex >= trackPoints.length - 1">
                 <el-icon><Right /></el-icon>
               </el-button>
             </el-button-group>
-            <div style="margin-top: 10px">
-              <span style="font-size: 12px; color: #666">速度:</span>
-              <el-select v-model="playSpeed" size="small" style="width: 80px; margin-left: 8px">
+            <div class="speed-row">
+              <span class="speed-label">速度:</span>
+              <el-select v-model="playSpeed" size="small" class="speed-select">
+                <el-option :value="0.5" label="0.5x" />
                 <el-option :value="1" label="1x" />
                 <el-option :value="2" label="2x" />
                 <el-option :value="5" label="5x" />
                 <el-option :value="10" label="10x" />
+                <el-option :value="30" label="30x" />
+                <el-option :value="60" label="60x" />
               </el-select>
             </div>
           </div>
-          <div style="margin-top: 10px">
+          <div class="slider-block">
             <el-slider
-              v-model="currentIndex"
+              :model-value="uiIndex"
               :min="0"
               :max="trackPoints.length - 1"
               :step="1"
               :show-tooltip="false"
+              @input="onSliderInput"
               @change="onSliderChange"
             />
-            <div style="display: flex; justify-content: space-between; font-size: 12px; color: #666">
-              <span>{{ trackPoints[0]?.trackTime?.slice(0, 16) || '--' }}</span>
-              <span>{{ currentPoint?.trackTime?.slice(0, 16) || '--' }}</span>
-              <span>{{ trackPoints[trackPoints.length - 1]?.trackTime?.slice(0, 16) || '--' }}</span>
+            <div class="time-row">
+              <span class="time-label">{{ startLabel }}</span>
+              <span class="time-label time-current">{{ currentLabel }}</span>
+              <span class="time-label">{{ endLabel }}</span>
             </div>
           </div>
         </div>
 
-        <div class="panel" v-if="currentPoint">
+        <div class="panel" v-if="uiPoint">
           <h3>当前信息</h3>
-          <div class="info-item">
-            <span class="label">时间:</span>
-            <span class="value">{{ currentPoint.trackTime }}</span>
-          </div>
-          <div class="info-item">
-            <span class="label">经度:</span>
-            <span class="value">{{ currentPoint.longitude }}</span>
-          </div>
-          <div class="info-item">
-            <span class="label">纬度:</span>
-            <span class="value">{{ currentPoint.latitude }}</span>
-          </div>
-          <div class="info-item">
-            <span class="label">航速:</span>
-            <span class="value">{{ currentPoint.speed }} 节</span>
-          </div>
-          <div class="info-item">
-            <span class="label">航向:</span>
-            <span class="value">{{ currentPoint.heading }}°</span>
-          </div>
+          <div class="info-item"><span class="label">时间:</span><span class="value">{{ uiPoint.trackTime }}</span></div>
+          <div class="info-item"><span class="label">经度:</span><span class="value">{{ uiPoint.longitude }}</span></div>
+          <div class="info-item"><span class="label">纬度:</span><span class="value">{{ uiPoint.latitude }}</span></div>
+          <div class="info-item"><span class="label">航速:</span><span class="value">{{ uiPoint.speed }} 节</span></div>
+          <div class="info-item"><span class="label">航向:</span><span class="value">{{ uiPoint.heading }}°</span></div>
         </div>
 
         <div class="panel">
@@ -119,8 +110,11 @@
             <el-option value="pressure" label="气压 (hPa)" />
             <el-option value="waveHeight" label="浪高 (m)" />
           </el-select>
-          <div style="margin-top: 10px">
+          <div class="switch-row">
             <el-switch v-model="showWeather" active-text="显示气象" />
+            <span class="weather-status" :class="weatherStatusClass">
+              {{ weatherStatusText }}
+            </span>
           </div>
           <div class="legend" v-if="showWeather">
             <div class="legend-title">{{ weatherLegend.title }}</div>
@@ -145,18 +139,18 @@
       <FishingMap
         ref="mapRef"
         :track-points="trackPoints"
-        :current-index="currentIndex"
-        :weather-grids="weatherGrids"
+        :display-index="uiIndex"
+        :weather-grids="displayWeatherGrids"
         :show-weather="showWeather"
         :weather-type="weatherType"
-        :weather-legend="weatherLegend"
       />
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, shallowRef } from 'vue'
+import { ElMessage } from 'element-plus'
 import { vesselApi, trackApi, weatherApi } from './api'
 import FishingMap from './components/FishingMap.vue'
 
@@ -164,17 +158,34 @@ const mapRef = ref(null)
 const vesselList = ref([])
 const selectedVesselId = ref(null)
 const timeRange = ref([])
-const trackPoints = ref([])
+const trackPoints = shallowRef([])
 const loadingTrack = ref(false)
 
 const isPlaying = ref(false)
-const currentIndex = ref(0)
+const uiIndex = ref(0)
 const playSpeed = ref(1)
-let playTimer = null
 
 const showWeather = ref(true)
 const weatherType = ref('windSpeed')
-const weatherGrids = ref([])
+const displayWeatherGrids = shallowRef([])
+
+const weatherCache = new Map()
+const weatherTimes = []
+let weatherPrefetchPromise = null
+
+const trackBounds = { minLon: 0, maxLon: 0, minLat: 0, maxLat: 0 }
+const rawTrackTimes = []
+
+let rafId = null
+let lastFrameTs = 0
+let virtualFloatIndex = 0
+let accumulator = 0
+
+const UI_UPDATE_INTERVAL_MS = 120
+let lastUiSyncTs = 0
+const WEATHER_SYNC_INTERVAL_MS = 800
+let lastWeatherSyncTs = 0
+let lastAppliedWeatherIdx = -1
 
 const weatherConfig = {
   windSpeed: { title: '风速 (m/s)', min: 0, max: 25, unit: 'm/s' },
@@ -191,7 +202,7 @@ const weatherLegend = computed(() => {
     const val = config.min + stepVal * i
     colors.push({
       value: val,
-      color: getWeatherColor(val, config.min, config.max)
+      color: getWeatherColorHex(val, config.min, config.max)
     })
   }
   return {
@@ -202,7 +213,7 @@ const weatherLegend = computed(() => {
   }
 })
 
-function getWeatherColor(value, min, max) {
+function getWeatherColorHex(value, min, max) {
   const ratio = Math.max(0, Math.min(1, (value - min) / (max - min)))
   if (ratio < 0.2) return '#313695'
   if (ratio < 0.4) return '#4575b4'
@@ -212,7 +223,28 @@ function getWeatherColor(value, min, max) {
   return '#d73027'
 }
 
-const currentPoint = computed(() => trackPoints.value[currentIndex.value] || null)
+const uiPoint = computed(() => trackPoints.value[uiIndex.value] || null)
+const startLabel = computed(() => trackPoints.value[0]?.trackTime?.slice(5, 16) || '--')
+const endLabel = computed(() => trackPoints.value[trackPoints.value.length - 1]?.trackTime?.slice(5, 16) || '--')
+const currentLabel = computed(() => uiPoint.value?.trackTime?.slice(5, 16) || '--')
+
+const weatherStatusText = computed(() => {
+  if (!showWeather.value) return '已关闭'
+  if (!weatherTimes.length) return '无数据'
+  const ready = weatherCache.size
+  const total = weatherTimes.length
+  if (ready === 0) return '加载中...'
+  if (ready < total) return `预取 ${ready}/${total}`
+  return `就绪 (${ready})`
+})
+const weatherStatusClass = computed(() => {
+  if (!showWeather.value) return 'status-off'
+  const ready = weatherCache.size
+  const total = weatherTimes.length
+  if (ready === 0) return 'status-loading'
+  if (ready < total) return 'status-partial'
+  return 'status-ready'
+})
 
 onMounted(async () => {
   const now = new Date()
@@ -239,119 +271,285 @@ function formatDate(d) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
-function onVesselChange() {
-  queryTrack()
+function parseDate(s) {
+  if (!s) return 0
+  const t = Date.parse(s.replace(' ', 'T'))
+  return isNaN(t) ? 0 : t
 }
 
-function onTimeRangeChange() {
+function onVesselChange() {
   queryTrack()
 }
 
 async function queryTrack() {
   if (!selectedVesselId.value || !timeRange.value || timeRange.value.length < 2) return
 
-  loadingTrack.value = true
   stopPlayback()
-  currentIndex.value = 0
+  loadingTrack.value = true
+  clearWeatherCache()
+  displayWeatherGrids.value = []
+  uiIndex.value = 0
+  virtualFloatIndex = 0
+  accumulator = 0
 
   try {
-    trackPoints.value = await trackApi.query({
+    const tracks = await trackApi.query({
       vesselId: selectedVesselId.value,
       startTime: timeRange.value[0],
       endTime: timeRange.value[1]
     })
 
+    trackPoints.value = tracks || []
+
     if (trackPoints.value.length > 0) {
-      await loadWeatherData(trackPoints.value[0].trackTime)
+      precomputeTrackMeta()
+      scheduleWeatherPrefetch()
+      applyWeatherForIndex(0, true)
     }
   } catch (e) {
     console.error('查询轨迹失败', e)
+    ElMessage.error('查询轨迹失败')
   } finally {
     loadingTrack.value = false
   }
 }
 
-async function loadWeatherData(timeStr) {
-  if (!timeStr) return
-  try {
-    const trackLons = trackPoints.value.map(p => parseFloat(p.longitude))
-    const trackLats = trackPoints.value.map(p => parseFloat(p.latitude))
-    const minLon = Math.min(...trackLons) - 2
-    const maxLon = Math.max(...trackLons) + 2
-    const minLat = Math.min(...trackLats) - 2
-    const maxLat = Math.max(...trackLats) + 2
+function precomputeTrackMeta() {
+  const pts = trackPoints.value
+  const lons = new Array(pts.length)
+  const lats = new Array(pts.length)
+  const times = new Array(pts.length)
+  for (let i = 0; i < pts.length; i++) {
+    lons[i] = parseFloat(pts[i].longitude)
+    lats[i] = parseFloat(pts[i].latitude)
+    times[i] = parseDate(pts[i].trackTime)
+  }
+  trackBounds.minLon = Math.min(...lons) - 2
+  trackBounds.maxLon = Math.max(...lons) + 2
+  trackBounds.minLat = Math.min(...lats) - 2
+  trackBounds.maxLat = Math.max(...lats) + 2
+  rawTrackTimes.length = 0
+  for (let i = 0; i < times.length; i++) rawTrackTimes.push(times[i])
+}
 
-    weatherGrids.value = await weatherApi.getGrid({
-      gridTime: timeStr,
-      minLon,
-      maxLon,
-      minLat,
-      maxLat
-    })
-  } catch (e) {
-    console.error('加载气象数据失败', e)
+function clearWeatherCache() {
+  weatherCache.clear()
+  weatherTimes.length = 0
+  weatherPrefetchPromise = null
+  lastAppliedWeatherIdx = -1
+}
+
+function scheduleWeatherPrefetch() {
+  if (!showWeather.value) return
+  weatherPrefetchPromise = (async () => {
+    try {
+      const pts = trackPoints.value
+      if (pts.length < 2) return
+
+      const t0 = rawTrackTimes[0]
+      const tN = rawTrackTimes[rawTrackTimes.length - 1]
+      const stepMs = 3 * 3600 * 1000
+      const bucketTimes = []
+      let aligned = Math.floor(t0 / stepMs) * stepMs
+      while (aligned <= tN + stepMs) {
+        bucketTimes.push(aligned)
+        aligned += stepMs
+      }
+
+      weatherTimes.length = 0
+      for (let i = 0; i < bucketTimes.length; i++) weatherTimes.push(bucketTimes[i])
+
+      for (let i = 0; i < bucketTimes.length; i++) {
+        if (isPlaying.value === false && i > 0) break
+        const key = bucketTimes[i]
+        if (weatherCache.has(key)) continue
+
+        const d = new Date(key)
+        const pad = (n) => n.toString().padStart(2, '0')
+        const timeStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+
+        try {
+          const data = await weatherApi.getGrid({
+            gridTime: timeStr,
+            minLon: trackBounds.minLon,
+            maxLon: trackBounds.maxLon,
+            minLat: trackBounds.minLat,
+            maxLat: trackBounds.maxLat
+          })
+          if (data && data.length) {
+            weatherCache.set(key, data)
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+    } catch (e) {
+      console.warn('气象预取异常', e)
+    }
+  })()
+}
+
+function findWeatherBucketIndex(trackIdx) {
+  const trackTs = rawTrackTimes[trackIdx] || 0
+  if (weatherTimes.length === 0 || !trackTs) return -1
+
+  const stepMs = 3 * 3600 * 1000
+  const bucketStart = Math.floor(trackTs / stepMs) * stepMs
+  for (let i = 0; i < weatherTimes.length; i++) {
+    if (weatherTimes[i] === bucketStart) return i
+    if (weatherTimes[i] > bucketStart) return i > 0 ? i - 1 : 0
+  }
+  return weatherTimes.length - 1
+}
+
+function applyWeatherForIndex(trackIdx, force = false) {
+  if (!showWeather.value) return
+  const bucketIdx = findWeatherBucketIndex(trackIdx)
+  if (bucketIdx < 0) return
+  if (!force && bucketIdx === lastAppliedWeatherIdx) return
+
+  const key = weatherTimes[bucketIdx]
+  const cached = key != null ? weatherCache.get(key) : null
+  if (cached) {
+    displayWeatherGrids.value = cached
+    lastAppliedWeatherIdx = bucketIdx
+  } else if (!weatherPrefetchPromise && force) {
+    scheduleWeatherPrefetch()
   }
 }
 
 function togglePlayback() {
-  if (isPlaying.value) {
-    stopPlayback()
-  } else {
-    startPlayback()
-  }
+  if (isPlaying.value) stopPlayback()
+  else startPlayback()
 }
 
 function startPlayback() {
-  if (currentIndex.value >= trackPoints.value.length - 1) {
-    currentIndex.value = 0
+  if (trackPoints.value.length < 2) return
+  if (uiIndex.value >= trackPoints.value.length - 1) {
+    uiIndex.value = 0
+    virtualFloatIndex = 0
+    accumulator = 0
   }
+
   isPlaying.value = true
-  const interval = 1000 / playSpeed.value
-  playTimer = setInterval(() => {
-    if (currentIndex.value < trackPoints.value.length - 1) {
-      currentIndex.value++
-      if (currentIndex.value % 10 === 0) {
-        loadWeatherData(trackPoints.value[currentIndex.value].trackTime)
-      }
-    } else {
-      stopPlayback()
-    }
-  }, interval)
+  lastFrameTs = 0
+  lastUiSyncTs = performance.now()
+  lastWeatherSyncTs = performance.now()
+  rafId = requestAnimationFrame(playLoop)
+
+  scheduleWeatherPrefetch()
 }
 
 function stopPlayback() {
   isPlaying.value = false
-  if (playTimer) {
-    clearInterval(playTimer)
-    playTimer = null
+  if (rafId != null) {
+    cancelAnimationFrame(rafId)
+    rafId = null
   }
+  lastFrameTs = 0
+}
+
+function playLoop(ts) {
+  if (!isPlaying.value) return
+
+  if (!lastFrameTs) lastFrameTs = ts
+  const deltaMs = Math.min(100, ts - lastFrameTs)
+  lastFrameTs = ts
+
+  const pts = trackPoints.value
+  const count = pts.length
+  if (count < 2) return
+
+  const baseDurationMs = (rawTrackTimes[count - 1] - rawTrackTimes[0]) || (count * 30 * 60 * 1000)
+  const targetPlaybackMs = baseDurationMs / playSpeed.value
+  const idxPerMs = (count - 1) / targetPlaybackMs
+
+  accumulator += deltaMs
+  const stepFloat = idxPerMs * accumulator
+  accumulator = 0
+
+  virtualFloatIndex = Math.min(count - 1, virtualFloatIndex + stepFloat)
+  const intIndex = Math.min(count - 1, Math.floor(virtualFloatIndex))
+
+  const map = mapRef.value
+  if (map && typeof map.setProgressByIndex === 'function') {
+    const ratio = virtualFloatIndex / (count - 1)
+    map.setProgressByRatio(ratio, intIndex)
+  }
+
+  const now = ts
+  if (now - lastUiSyncTs >= UI_UPDATE_INTERVAL_MS) {
+    uiIndex.value = intIndex
+    lastUiSyncTs = now
+  }
+
+  if (now - lastWeatherSyncTs >= WEATHER_SYNC_INTERVAL_MS) {
+    applyWeatherForIndex(intIndex)
+    lastWeatherSyncTs = now
+  }
+
+  if (virtualFloatIndex >= count - 1) {
+    uiIndex.value = count - 1
+    applyWeatherForIndex(count - 1)
+    stopPlayback()
+    return
+  }
+
+  rafId = requestAnimationFrame(playLoop)
 }
 
 function resetPlayback() {
   stopPlayback()
-  currentIndex.value = 0
-  if (trackPoints.value.length > 0) {
-    loadWeatherData(trackPoints.value[0].trackTime)
+  uiIndex.value = 0
+  virtualFloatIndex = 0
+  accumulator = 0
+  const map = mapRef.value
+  if (map && typeof map.setProgressByIndex === 'function') {
+    map.setProgressByIndex(0)
   }
+  applyWeatherForIndex(0, true)
 }
 
 function stepForward() {
-  if (currentIndex.value < trackPoints.value.length - 1) {
-    currentIndex.value++
-    loadWeatherData(trackPoints.value[currentIndex.value].trackTime)
+  const next = Math.min(trackPoints.value.length - 1, uiIndex.value + Math.max(1, Math.floor(trackPoints.value.length / 200)))
+  uiIndex.value = next
+  virtualFloatIndex = next
+  const map = mapRef.value
+  if (map && typeof map.setProgressByIndex === 'function') {
+    map.setProgressByIndex(next)
+  }
+  applyWeatherForIndex(next, true)
+}
+
+function onSliderInput(val) {
+  const v = Number(val) || 0
+  uiIndex.value = v
+  virtualFloatIndex = v
+  const map = mapRef.value
+  if (map && typeof map.setProgressByIndex === 'function') {
+    map.setProgressByIndex(v)
   }
 }
 
-function onSliderChange() {
-  if (trackPoints.value[currentIndex.value]) {
-    loadWeatherData(trackPoints.value[currentIndex.value].trackTime)
-  }
+function onSliderChange(val) {
+  const v = Number(val) || 0
+  applyWeatherForIndex(v, true)
 }
 
 watch(playSpeed, () => {
-  if (isPlaying.value) {
-    stopPlayback()
-    startPlayback()
+  // 无需重启，下一帧自动用新速度
+})
+
+watch(weatherType, () => {
+  if (trackPoints.value.length > 0) {
+    applyWeatherForIndex(uiIndex.value, true)
+  }
+})
+
+watch(showWeather, (val) => {
+  if (val && trackPoints.value.length > 0) {
+    scheduleWeatherPrefetch()
+    applyWeatherForIndex(uiIndex.value, true)
   }
 })
 </script>
@@ -374,7 +572,7 @@ watch(playSpeed, () => {
 }
 
 .sidebar-header {
-  padding: 16px;
+  padding: 14px 16px;
   background: linear-gradient(135deg, #1e88e5, #1565c0);
   color: #fff;
 }
@@ -382,6 +580,13 @@ watch(playSpeed, () => {
 .sidebar-header h2 {
   font-size: 16px;
   margin: 0;
+  font-weight: 600;
+}
+
+.sub-title {
+  font-size: 12px;
+  opacity: 0.8;
+  margin-top: 4px;
 }
 
 .sidebar-content {
@@ -391,7 +596,7 @@ watch(playSpeed, () => {
 }
 
 .panel {
-  margin-bottom: 16px;
+  margin-bottom: 14px;
   padding: 12px;
   background: #f5f7fa;
   border-radius: 6px;
@@ -419,13 +624,85 @@ watch(playSpeed, () => {
 .info-item .value {
   color: #333;
   font-weight: 500;
+  max-width: 55%;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .play-controls {
   display: flex;
   flex-direction: column;
   align-items: center;
+  gap: 8px;
 }
+
+.speed-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.speed-label {
+  font-size: 12px;
+  color: #666;
+}
+
+.speed-select {
+  width: 100px;
+}
+
+.slider-block {
+  margin-top: 10px;
+}
+
+.time-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  font-size: 11px;
+  color: #666;
+  margin-top: 6px;
+}
+
+.time-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.time-label:first-child {
+  text-align: left;
+}
+.time-label:last-child {
+  text-align: right;
+}
+.time-current {
+  text-align: center;
+  color: #1976d2;
+  font-weight: 600;
+  flex: 1.2;
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.weather-status {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+.status-off { color: #999; background: #f0f0f0; }
+.status-loading { color: #e6a23c; background: #faecd8; }
+.status-partial { color: #909399; background: #f4f4f5; }
+.status-ready { color: #67c23a; background: #f0f9eb; }
 
 .legend {
   margin-top: 12px;
